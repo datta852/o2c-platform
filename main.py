@@ -46,3 +46,23 @@ def get_customers(customer_id:int):
         if customer.id == customer_id:
             return customer
     raise HTTPException(status_code=404, detail="Customer not found")
+
+@app.delete("/customers/{customer_id}")
+def delete_customer(customer_id:int):
+    # Here you would typically delete customers from a database
+    for customer in customer_data:
+        if customer.id == customer_id:
+            customer_data.remove(customer)
+            return {"message": "Customer deleted successfully"}
+    raise HTTPException(status_code=404, detail="Customer not found")
+
+@app.put("/customers/{customer_id}")
+def update_customer(customer_id:int,customer:Customer):
+    # Here you would typically update customers in a database
+    for existing_customer in customer_data:
+        if existing_customer.id == customer_id:
+            existing_customer.name=customer.name
+            existing_customer.email=customer.email
+            existing_customer.country=customer.country
+            return {"message": "Customer updated successfully","customer":existing_customer}
+    raise HTTPException(status_code=404,detail="Customer not found")
