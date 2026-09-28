@@ -73,8 +73,7 @@ def update_customer(customer_id:int,customer:Customer,db:Session=Depends(get_db)
     customer=db.query(CustomerDB).filter(CustomerDB.id==customer_id).first()
 
     #Continue with the update logic
-    # for existing_customer in customer_data:
-    
+
     # db.commit()
 
     # if not customer:
