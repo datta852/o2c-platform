@@ -1,8 +1,6 @@
 from sqlalchemy import create_engine,Column,Integer,String
 from sqlalchemy.orm import declarative_base,sessionmaker
 
-
-
 DATABASE_URL="sqlite:///./o2c.db"
 
 engine=create_engine(DATABASE_URL)
