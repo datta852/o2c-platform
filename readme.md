@@ -42,8 +42,8 @@ The project has progressed from a basic backend skeleton into a working FastAPI 
 ## Getting Started
 
 ```bash
-pip install fastapi uvicorn
-uvicorn main:app --reload
+pip install fastapi
+fastapi dev
 ```
 
 Then open:
