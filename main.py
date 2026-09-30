@@ -59,24 +59,43 @@ def get_customer(customer_id:int,db:Session=Depends(get_db)):
     
 
 @app.delete("/customers/{customer_id}")
-def delete_customer(customer_id:int):
+def delete_customer(customer_id:int,db:Session=Depends(get_db)):
     # Here you would typically delete customers from a database
-    for customer in customer_data:
-        if customer.id == customer_id:
-            customer_data.remove(customer)
-            return {"message": "Customer deleted successfully"}
-    raise HTTPException(status_code=404, detail="Customer not found")
+
+    #Find the customer in the database
+    customer_db=db.query(CustomerDB).filter(CustomerDB.id==customer_id).first()
+
+    #Check if the customer exists
+    if not customer_db:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    #Delete the customer from the database
+    db.delete(customer_db)
+
+    #Save changes to the database
+    db.commit()
+
+    #Return the result after deletion
+    return customer_db
 
 @app.put("/customers/{customer_id}")
 def update_customer(customer_id:int,customer:Customer,db:Session=Depends(get_db)):
     # Here you would typically update customers in a database
-    customer=db.query(CustomerDB).filter(CustomerDB.id==customer_id).first()
 
-    #Continue with the update logic
+    #Find existing customer
+    customer_db=db.query(CustomerDB).filter(CustomerDB.id==customer_id).first()
 
-    # db.commit()
+    #Check if it exists
+    if not customer_db:
+        raise HTTPException(status_code=404,detail="Customer not found")
 
-    # if not customer:
-    #     raise HTTPException(status_code=404,detail="Customer not found")
+    #Update the existing database object
+    customer_db.name=customer.name
+    customer_db.country=customer.country
+    customer_db.email=customer.email
 
-    return customer
+    #Save changes
+    db.commit()
+
+    #Return the updated customer
+    return customer_db
