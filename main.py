@@ -1,15 +1,23 @@
 from fastapi import FastAPI,HTTPException,Depends
-from pydantic import BaseModel
+from pydantic import BaseModel,ConfigDict
 from database import get_db,CustomerDB
 from sqlalchemy.orm import Session
 
 customer_data=[]
 next_id = 1
 
-class Customer(BaseModel):
+class CustomerCreate(BaseModel):
     name:str
     country:str
     email:str
+
+class CustomerResponse(BaseModel):
+    id:int
+    name:str
+    country:str
+    email:str
+
+    model_config=ConfigDict(from_attributes=True)
 
 app = FastAPI()
 
@@ -29,8 +37,8 @@ def about():
         "version":"1.0.0",
     }
 
-@app.post("/customers")
-def create_customer(customer: Customer,db:Session=Depends(get_db)): #FastAPI Dependency Injection to get the database session.
+@app.post("/customers",response_model=CustomerResponse)
+def create_customer(customer: CustomerCreate,db:Session=Depends(get_db)): #FastAPI Dependency Injection to get the database session.
     # Here you would typically add logic to save the customer to a database
     db_customer = CustomerDB(
         name=customer.name,
@@ -44,7 +52,13 @@ def create_customer(customer: Customer,db:Session=Depends(get_db)): #FastAPI Dep
 
     return db_customer
 
-@app.get("/customers/{customer_id}")
+
+@app.get("/customers",response_model=list[CustomerResponse])
+def get_customers(db:Session=Depends(get_db)):
+    # Here you would typically retrieve customers from a database
+    return db.query(CustomerDB).all()
+
+@app.get("/customers/{customer_id}",response_model=CustomerResponse)
 def get_customer(customer_id:int,db:Session=Depends(get_db)):
     # Here you would typically retrieve customers from a database
 
@@ -76,10 +90,10 @@ def delete_customer(customer_id:int,db:Session=Depends(get_db)):
     db.commit()
 
     #Return the result after deletion
-    return customer_db
+    return {"message": f"Customer with id {customer_id} has been deleted successfully."}
 
-@app.put("/customers/{customer_id}")
-def update_customer(customer_id:int,customer:Customer,db:Session=Depends(get_db)):
+@app.put("/customers/{customer_id}",response_model=CustomerResponse)
+def update_customer(customer_id:int,customer:CustomerCreate,db:Session=Depends(get_db)):
     # Here you would typically update customers in a database
 
     #Find existing customer
