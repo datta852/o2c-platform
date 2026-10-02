@@ -31,6 +31,7 @@ O2C Platform is a lightweight backend application built with FastAPI to support 
 | GET | `/health` | Checks service health status |
 | GET | `/about` | Returns project information |
 | POST | `/customers` | Creates a new customer record |
+| GET | `/customers` | Fetches the complete list of customers |
 | GET | `/customers/{customer_id}` | Fetches a customer by ID |
 | PUT | `/customers/{customer_id}` | Modifies a customer by ID |
 | DELETE | `/customers/{customer_id}` | Deletes a customer by ID |
