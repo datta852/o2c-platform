@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine,Column,Integer,String
+from sqlalchemy import create_engine,Column,Integer,String,Numeric
 from sqlalchemy.orm import declarative_base,sessionmaker
 
 DATABASE_URL="sqlite:///./o2c.db"
@@ -16,6 +16,8 @@ class CustomerDB(Base):
     name=Column(String)
     country=Column(String)
     email=Column(String)
+    credit_limit=Column(Numeric(15,2),default=0)
+    payment_terms=Column(String,default="Net 30")
 
 def get_db():
     db=SessionLocal()

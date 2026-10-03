@@ -1,21 +1,34 @@
+from enum import Enum, Enum
 from fastapi import FastAPI,HTTPException,Depends
-from pydantic import BaseModel,ConfigDict
+from pydantic import BaseModel,ConfigDict,Field
 from database import get_db,CustomerDB
 from sqlalchemy.orm import Session
 
 customer_data=[]
 next_id = 1
 
+
+class PaymentTerms(str,Enum):#Enum class allows you to choose from a set of predefined values for the payment terms.
+    net_15="Net_15"
+    net_30="Net_30"
+    net_45="Net_45"
+    net_60="Net_60"
+    net_90="Net_90"
+
 class CustomerCreate(BaseModel):
     name:str
     country:str
     email:str
+    credit_limit:float=Field(ge=0,description="Credit limit must be a non-negative value")#Field with ge=0 ensures that the credit limit is a non-negative value.
+    payment_terms:PaymentTerms
 
 class CustomerResponse(BaseModel):
     id:int
     name:str
     country:str
     email:str
+    credit_limit:float=Field(ge=0,description="Credit limit must be a non-negative value")#Field with ge=0 ensures that the credit limit is a non-negative value.
+    payment_terms:PaymentTerms
 
     model_config=ConfigDict(from_attributes=True)
 
@@ -43,7 +56,9 @@ def create_customer(customer: CustomerCreate,db:Session=Depends(get_db)): #FastA
     db_customer = CustomerDB(
         name=customer.name,
         country=customer.country,
-        email=customer.email
+        email=customer.email,
+        credit_limit=customer.credit_limit,
+        payment_terms=customer.payment_terms
     )
 
     db.add(db_customer)
