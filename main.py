@@ -1,8 +1,9 @@
 from enum import Enum, Enum
 from fastapi import FastAPI,HTTPException,Depends
 from pydantic import BaseModel,ConfigDict,Field
-from database import get_db,CustomerDB
+from database import get_db,CustomerDB,SalesOrderDB
 from sqlalchemy.orm import Session
+from datetime import date
 
 customer_data=[]
 next_id = 1
@@ -14,6 +15,15 @@ class PaymentTerms(str,Enum):#Enum class allows you to choose from a set of pred
     net_45="Net_45"
     net_60="Net_60"
     net_90="Net_90"
+
+class order_Status(str,Enum):
+    #Enum class allows you to choose from a set of predefined values for the order status.
+    open="OPEN"
+    awaiting_approval="AWAITING_APPROVAL"
+    processed="PROCESSED"
+    blocked="BLOCKED"
+    closed="CLOSED"
+    cancelled="CANCELLED"
 
 class CustomerCreate(BaseModel):
     name:str
@@ -29,6 +39,21 @@ class CustomerResponse(BaseModel):
     email:str
     credit_limit:float=Field(ge=0,description="Credit limit must be a non-negative value")#Field with ge=0 ensures that the credit limit is a non-negative value.
     payment_terms:PaymentTerms
+
+    model_config=ConfigDict(from_attributes=True)
+
+class SalesOrderCreate(BaseModel):
+    customer_id:int
+    order_date:date
+    order_amount:float=Field(ge=0,description="Order amount must be a non-negative value")#Field with ge=0 ensures that the order amount is a non-negative value.
+    order_status:order_Status
+
+class SalesOrderResponse(BaseModel):
+    order_id:int
+    customer_id:int
+    order_date:date
+    order_amount:float=Field(ge=0,description="Order amount must be a non-negative value")#Field with ge=0 ensures that the order amount is a non-negative value.
+    order_status:order_Status
 
     model_config=ConfigDict(from_attributes=True)
 
@@ -67,6 +92,29 @@ def create_customer(customer: CustomerCreate,db:Session=Depends(get_db)): #FastA
 
     return db_customer
 
+@app.post("/orders",response_model=SalesOrderResponse)
+def create_sales_orders(order:SalesOrderCreate,db:Session=Depends(get_db)):
+    
+    customer=db.query(CustomerDB).filter(CustomerDB.id==order.customer_id).first()
+
+    if not customer:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Customer not found")
+
+    db_order=SalesOrderDB(
+        customer_id=order.customer_id,
+        order_date=order.order_date,
+        order_amount=order.order_amount,
+        order_status=order.order_status
+    )
+
+    db.add(db_order)
+    db.commit()
+    db.refresh(db_order)
+
+    return db_order
+
 
 @app.get("/customers",response_model=list[CustomerResponse])
 def get_customers(db:Session=Depends(get_db)):
@@ -85,7 +133,24 @@ def get_customer(customer_id:int,db:Session=Depends(get_db)):
             detail="Customer not found")
 
     return customer
-    
+
+
+@app.get("/orders",response_model=list[SalesOrderResponse])
+def get_sales_orders(db:Session=Depends(get_db)):
+    # Here you would typically retrieve sales orders from a database
+    return db.query(SalesOrderDB).all()
+
+@app.get("/orders/{order_id}",response_model=SalesOrderResponse)
+def get_sales_order(order_id:int,db:Session=Depends(get_db)):
+    # Here you would typically retrieve sales orders from a database
+    db_order=db.query(SalesOrderDB).filter(SalesOrderDB.order_id==order_id).first()
+
+    if not db_order:
+        raise HTTPException(
+            status_code=404,
+            detail="Sales order not found")
+
+    return db_order
 
 @app.delete("/customers/{customer_id}")
 def delete_customer(customer_id:int,db:Session=Depends(get_db)):

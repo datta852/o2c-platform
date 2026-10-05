@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine,Column,Integer,String,Numeric
+from sqlalchemy import Date, create_engine,Column,Integer,String,Numeric,ForeignKey
 from sqlalchemy.orm import declarative_base,sessionmaker
 
 DATABASE_URL="sqlite:///./o2c.db"
@@ -18,6 +18,17 @@ class CustomerDB(Base):
     email=Column(String)
     credit_limit=Column(Numeric(15,2),default=0)
     payment_terms=Column(String,default="Net 30")
+
+class SalesOrderDB(Base):
+    
+    __tablename__="Salesorders"
+
+    order_id=Column(Integer,primary_key=True,index=True)
+    customer_id=Column(Integer,ForeignKey("Customers.id"))
+    order_date=Column(Date)
+    order_amount=Column(Numeric(15,2))
+    order_status=Column(String)
+
 
 def get_db():
     db=SessionLocal()
