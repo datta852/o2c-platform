@@ -172,6 +172,28 @@ def delete_customer(customer_id:int,db:Session=Depends(get_db)):
     #Return the result after deletion
     return {"message": f"Customer with id {customer_id} has been deleted successfully."}
 
+@app.delete("/orders/{order_id}")
+def delete_sales_order(order_id:int,db:Session=Depends(get_db)):
+
+    # Here you would typically delete sales orders from a database
+
+    #Find the sales order in the database
+    db_order=db.query(SalesOrderDB).filter(SalesOrderDB.order_id==order_id).first()
+    
+    #Check if the sales order exists
+    if not db_order:
+        raise HTTPException(status_code=404,detail="Sales order not found")
+
+    #Delete the sales order from the database
+    db.delete(db_order)
+
+    #Save changes to the database
+    db.commit()
+
+    #Return the result after deletion
+    return {"message": f"Sales order with id {order_id} has been deleted successfully."}
+
+
 @app.put("/customers/{customer_id}",response_model=CustomerResponse)
 def update_customer(customer_id:int,customer:CustomerCreate,db:Session=Depends(get_db)):
     # Here you would typically update customers in a database
@@ -193,3 +215,25 @@ def update_customer(customer_id:int,customer:CustomerCreate,db:Session=Depends(g
 
     #Return the updated customer
     return customer_db
+
+@app.put("/orders/{order_id}",response_model=SalesOrderResponse)
+def update_sales_orders(order_id:int,order:SalesOrderCreate,db:Session=Depends(get_db)):
+
+    # Here you would typically update sales orders in a database
+    db_order=db.query(SalesOrderDB).filter(SalesOrderDB.order_id==order_id).first()
+
+    #Check if the sales order exists
+    if not db_order:
+        raise HTTPException(status_code=404,detail="Sales order not found")
+
+    #Update the existing database object
+    db_order.customer_id=order.customer_id
+    db_order.order_amount=order.order_amount
+    db_order.order_date=order.order_date
+    db_order.order_status=order.order_status
+
+    #Save changes to the database
+    db.commit()
+
+    #Return the updated sales order
+    return db_order
