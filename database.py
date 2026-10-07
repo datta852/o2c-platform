@@ -29,6 +29,19 @@ class SalesOrderDB(Base):
     order_amount=Column(Numeric(15,2))
     order_status=Column(String)
 
+class InvoiceDB(Base):
+
+    __tablename__="Invoices"
+
+    invoice_id=Column(Integer,primary_key=True,index=True)
+    invoice_number=Column(String,unique=True)
+    customer_id=Column(Integer,ForeignKey("Customers.id"))
+    sales_order_id=Column(Integer,ForeignKey("Salesorders.order_id"))
+    invoice_date=Column(Date)
+    due_date=Column(Date)
+    invoice_amount=Column(Numeric(15,2))
+    invoice_status=Column(String)
+
 
 def get_db():
     db=SessionLocal()

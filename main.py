@@ -1,7 +1,7 @@
 from enum import Enum, Enum
 from fastapi import FastAPI,HTTPException,Depends
 from pydantic import BaseModel,ConfigDict,Field
-from database import get_db,CustomerDB,SalesOrderDB
+from database import get_db,CustomerDB,SalesOrderDB,InvoiceDB
 from sqlalchemy.orm import Session
 from datetime import date
 
@@ -23,6 +23,13 @@ class order_Status(str,Enum):
     processed="PROCESSED"
     blocked="BLOCKED"
     closed="CLOSED"
+    cancelled="CANCELLED"
+
+class InvoiceStatus(str,Enum):
+    open="OPEN"
+    paid="PAID"
+    partially_paid="PARTIALLY_PAID"
+    overdue="OVERDUE"
     cancelled="CANCELLED"
 
 class CustomerCreate(BaseModel):
@@ -57,6 +64,28 @@ class SalesOrderResponse(BaseModel):
 
     model_config=ConfigDict(from_attributes=True)
 
+class InvoiceCreate(BaseModel):
+    customer_id:int
+    invoice_number:str
+    sales_order_id:int
+    invoice_date:date
+    due_date:date
+    invoice_amount:float=Field(ge=0,description="Invoice amount must be a non-negative value")#Field with ge=0 ensures that the invoice amount is a non-negative value.
+    invoice_status:InvoiceStatus
+
+class InvoiceResponse(BaseModel):
+
+    invoice_id:int
+    customer_id:int
+    invoice_number:str
+    sales_order_id:int
+    invoice_date:date
+    due_date:date
+    invoice_amount:float=Field(ge=0,description="Invoice amount must be a non-negative value")#Field with ge=0 ensures that the invoice amount is a non-negative value.
+    invoice_status:InvoiceStatus
+
+    model_config=ConfigDict(from_attributes=True)
+    
 app = FastAPI()
 
 
@@ -115,6 +144,38 @@ def create_sales_orders(order:SalesOrderCreate,db:Session=Depends(get_db)):
 
     return db_order
 
+@app.post("/invoices",response_model=InvoiceResponse)
+def create_invoice(invoice:InvoiceCreate,db:Session=Depends(get_db)):
+
+    customer=db.query(CustomerDB).filter(CustomerDB.id==invoice.customer_id).first()
+
+    order=db.query(SalesOrderDB).filter(SalesOrderDB.order_id==invoice.sales_order_id).first()
+
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found")
+
+    if not order:
+            raise HTTPException(
+                status_code=404, 
+                detail="Sales order not found")
+
+    db_invoice=InvoiceDB(
+        customer_id=invoice.customer_id,
+        invoice_number=invoice.invoice_number,
+        sales_order_id=invoice.sales_order_id,
+        invoice_date=invoice.invoice_date,
+        due_date=invoice.due_date,
+        invoice_amount=invoice.invoice_amount,
+        invoice_status=invoice.invoice_status
+    )
+    
+    db.add(db_invoice)
+    db.commit()
+    db.refresh(db_invoice)
+
+    return db_invoice
 
 @app.get("/customers",response_model=list[CustomerResponse])
 def get_customers(db:Session=Depends(get_db)):
@@ -151,6 +212,24 @@ def get_sales_order(order_id:int,db:Session=Depends(get_db)):
             detail="Sales order not found")
 
     return db_order
+
+@app.get("/invoices",response_model=list[InvoiceResponse])
+def get_invoices(db:Session=Depends(get_db)):
+    # Here you would typically retrieve invoices from a database
+    return db.query(InvoiceDB).all()
+
+
+@app.get("/invoices/{invoice_id}",response_model=InvoiceResponse)
+def get_invoice(invoice_id:int,db:Session=Depends(get_db)):
+
+    db_invoice=db.query(InvoiceDB).filter(InvoiceDB.invoice_id==invoice_id).first()
+
+    if not db_invoice:
+        raise HTTPException(
+            status_code=404,
+            detail="Invoice not found")
+
+    return db_invoice
 
 @app.delete("/customers/{customer_id}")
 def delete_customer(customer_id:int,db:Session=Depends(get_db)):
@@ -193,6 +272,28 @@ def delete_sales_order(order_id:int,db:Session=Depends(get_db)):
     #Return the result after deletion
     return {"message": f"Sales order with id {order_id} has been deleted successfully."}
 
+@app.delete("/invoices/{invoice_id}")
+def delete_invoice(invoice_id:int,db:Session=Depends(get_db)):
+
+    # Here you would typically delete invoices from a database
+    
+    #Find the invoice in the database
+    db_invoice=db.query(InvoiceDB).filter(InvoiceDB.invoice_id==invoice_id).first()
+
+    #Check if the invoice exists
+    if not db_invoice:
+        raise HTTPException(
+            status_code=404,
+            detail="Invoice not found")
+
+    #Delete the invoice from the database
+    db.delete(db_invoice)
+
+    #Save changes to the database
+    db.commit()
+
+    #Return the result after deletion
+    return {"message": f"Invoice with id {invoice_id} has been deleted successfully."}
 
 @app.put("/customers/{customer_id}",response_model=CustomerResponse)
 def update_customer(customer_id:int,customer:CustomerCreate,db:Session=Depends(get_db)):
@@ -237,3 +338,21 @@ def update_sales_orders(order_id:int,order:SalesOrderCreate,db:Session=Depends(g
 
     #Return the updated sales order
     return db_order
+
+@app.put("/invoices/{invoice_id}",response_model=InvoiceResponse)
+def update_invoice(invoice_id:int,invoice:InvoiceCreate,db:Session=Depends(get_db)):
+
+    db_invoice=db.query(InvoiceDB).filter(InvoiceDB.invoice_id==invoice_id).first()
+
+    if not db_invoice:
+        raise HTTPException(status_code=404,detail="Invoice not found")
+
+    db_invoice.invoice_date=invoice.invoice_date
+    db_invoice.due_date=invoice.due_date
+    db_invoice.invoice_amount=invoice.invoice_amount
+    db_invoice.invoice_status=invoice.invoice_status
+
+
+    db.commit()
+
+    return db_invoice
