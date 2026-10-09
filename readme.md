@@ -45,10 +45,15 @@ O2C Platform is a lightweight backend application built with FastAPI to support 
 | GET | `/invoices/{invoice_id}` | Fetches an Invoice by ID |
 | PUT | `/invoices/{invoice_id}` | Modifies an Invoice by ID |
 | DELETE | `/invoices/{invoice_id}` | Deletes an Invoice by ID |
+| POST | `/payments` | Creates a new payment |
+| GET | `/payments` | Fetches the complete list of payment |
+| GET | `/payments/{payment_id}` | Fetches an payment by ID |
+| PUT | `/payments/{payment_id}` | Modifies an payment by ID |
+| DELETE | `/payments/{payment_id}` | Deletes an payment by ID |
 
 ## Current Progress
 
-The project has progressed from a basic backend skeleton into a working FastAPI service with a clean API structure, health checks, project metadata, and full CRUD operations for customers,sales orders and invoice. Recent updates include database-backed sales order storage and complete sales order and invoice creation, retrieval, modification, and deletion, alongside in-memory customer management. This provides a foundation for expanding validation, customer persistence, and broader O2C workflows.
+The project has progressed from a basic backend skeleton into a working FastAPI service with a clean API structure, health checks, project metadata, and full CRUD operations for customers,sales orders,invoice and payments. Recent updates include database-backed sales order storage and complete sales order and invoice creation, retrieval, modification, and deletion, alongside in-memory customer management. This provides a foundation for expanding validation, customer persistence, and broader O2C workflows.
 
 ## Getting Started
 
