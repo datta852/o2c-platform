@@ -42,6 +42,18 @@ class InvoiceDB(Base):
     invoice_amount=Column(Numeric(15,2))
     invoice_status=Column(String)
 
+class PaymentDB(Base):
+    
+    __tablename__="Payments"
+
+    payment_id=Column(Integer,primary_key=True,index=True)
+    payment_reference=Column(String,unique=True)
+    customer_id=Column(Integer,ForeignKey("Customers.id"))
+    payment_date=Column(Date)
+    payment_amount=Column(Numeric(15,2))
+    payment_method=Column(String)
+    payment_status=Column(String)
+
 
 def get_db():
     db=SessionLocal()

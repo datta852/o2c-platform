@@ -1,13 +1,12 @@
 from enum import Enum, Enum
 from fastapi import FastAPI,HTTPException,Depends
 from pydantic import BaseModel,ConfigDict,Field
-from database import get_db,CustomerDB,SalesOrderDB,InvoiceDB
+from database import get_db,CustomerDB,SalesOrderDB,InvoiceDB,PaymentDB
 from sqlalchemy.orm import Session
 from datetime import date
 
 customer_data=[]
 next_id = 1
-
 
 class PaymentTerms(str,Enum):#Enum class allows you to choose from a set of predefined values for the payment terms.
     net_15="Net_15"
@@ -31,6 +30,22 @@ class InvoiceStatus(str,Enum):
     partially_paid="PARTIALLY_PAID"
     overdue="OVERDUE"
     cancelled="CANCELLED"
+
+class PaymentStatus(str,Enum):
+    pending="PENDING"
+    completed="COMPLETED"
+    failed="FAILED"
+    refunded="REFUNDED"
+    cancelled="CANCELLED"
+
+class PaymentMethod(str,Enum):
+    credit_card="CREDIT_CARD"
+    debit_card="DEBIT_CARD"
+    bank_transfer="BANK_TRANSFER"
+    cheque="CHEQUE"
+    net_banking="NET_BANKING"
+    payment_gateway="PAYMENT_GATEWAY"
+
 
 class CustomerCreate(BaseModel):
     name:str
@@ -85,7 +100,34 @@ class InvoiceResponse(BaseModel):
     invoice_status:InvoiceStatus
 
     model_config=ConfigDict(from_attributes=True)
-    
+
+
+class PaymentCreate(BaseModel):
+    payment_reference:str
+    customer_id:int
+    payment_date:date
+    payment_amount:float=Field(ge=0,description="Payment amount must be a non-negative value")
+    payment_method:PaymentMethod
+    payment_status:PaymentStatus
+
+class PaymentUpdate(BaseModel):
+    payment_date:date
+    payment_amount:float=Field(ge=0,description="Payment amount must be a non-negative value")
+    payment_method:PaymentMethod
+    payment_status:PaymentStatus
+
+
+class PaymentResponse(BaseModel):
+    payment_id:int
+    payment_reference:str
+    customer_id:int
+    payment_date:date
+    payment_amount:float
+    payment_method:PaymentMethod
+    payment_status:PaymentStatus
+
+    model_config=ConfigDict(from_attributes=True)
+
 app = FastAPI()
 
 
@@ -177,6 +219,33 @@ def create_invoice(invoice:InvoiceCreate,db:Session=Depends(get_db)):
 
     return db_invoice
 
+@app.post("/payments",response_model=PaymentResponse)
+def create_payments(payment:PaymentCreate,db:Session=Depends(get_db)):
+
+    customer=db.query(CustomerDB).filter(CustomerDB.id==payment.customer_id).first()
+
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found")
+
+    db_payment=PaymentDB(
+        payment_reference=payment.payment_reference,
+        customer_id=payment.customer_id,
+        payment_date=payment.payment_date,
+        payment_amount=payment.payment_amount,
+        payment_method=payment.payment_method,
+        payment_status=payment.payment_status
+    )
+
+    db.add(db_payment)
+    db.commit()
+    db.refresh(db_payment)
+
+    return db_payment
+
+
+
 @app.get("/customers",response_model=list[CustomerResponse])
 def get_customers(db:Session=Depends(get_db)):
     # Here you would typically retrieve customers from a database
@@ -230,6 +299,23 @@ def get_invoice(invoice_id:int,db:Session=Depends(get_db)):
             detail="Invoice not found")
 
     return db_invoice
+
+@app.get("/payments",response_model=list[PaymentResponse])
+def get_payments(db:Session=Depends(get_db)):
+    # Here you would typically retrieve payments from a database
+    return db.query(PaymentDB).all()
+
+@app.get("/payments/{payment_id}",response_model=PaymentResponse)
+def get_payment(payment_id:int,db:Session=Depends(get_db)):
+
+    db_payment=db.query(PaymentDB).filter(PaymentDB.payment_id==payment_id).first()
+
+    if not db_payment:
+        raise HTTPException(
+            status_code=404,
+            detail="Payment not found")
+
+    return db_payment
 
 @app.delete("/customers/{customer_id}")
 def delete_customer(customer_id:int,db:Session=Depends(get_db)):
@@ -295,6 +381,23 @@ def delete_invoice(invoice_id:int,db:Session=Depends(get_db)):
     #Return the result after deletion
     return {"message": f"Invoice with id {invoice_id} has been deleted successfully."}
 
+@app.delete("/payments/{payment_id}")
+def delete_payment(payment_id:int,db:Session=Depends(get_db)):
+
+
+    db_payment=db.query(PaymentDB).filter(PaymentDB.payment_id==payment_id).first()
+
+    if not db_payment:
+        raise HTTPException(
+            status_code=404,
+            detail="Payment not found")
+
+    db.delete(db_payment)
+
+    db.commit()
+
+    return {"message": f"Payment with id {payment_id} has been deleted successfully."}
+
 @app.put("/customers/{customer_id}",response_model=CustomerResponse)
 def update_customer(customer_id:int,customer:CustomerCreate,db:Session=Depends(get_db)):
     # Here you would typically update customers in a database
@@ -356,3 +459,20 @@ def update_invoice(invoice_id:int,invoice:InvoiceCreate,db:Session=Depends(get_d
     db.commit()
 
     return db_invoice
+
+@app.put("/payments/{payment_id}",response_model=PaymentResponse)
+def update_payment(payment_id:int,payment:PaymentUpdate,db:Session=Depends(get_db)):
+
+    db_payment=db.query(PaymentDB).filter(PaymentDB.payment_id==payment_id).first()
+
+    if not db_payment:
+        raise HTTPException(status_code=404,detail="Payment not found")
+
+    db_payment.payment_date=payment.payment_date
+    db_payment.payment_amount=payment.payment_amount
+    db_payment.payment_method=payment.payment_method
+    db_payment.payment_status=payment.payment_status
+
+    db.commit()
+
+    return db_payment
