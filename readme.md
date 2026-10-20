@@ -53,7 +53,42 @@ O2C Platform is a lightweight backend application built with FastAPI to support 
 
 ## Current Progress
 
-The project has progressed from a basic backend skeleton into a working FastAPI service with a clean API structure, health checks, project metadata, and full CRUD operations for customers,sales orders,invoice and payments. Recent updates include database-backed sales order storage and complete sales order and invoice creation, retrieval, modification, and deletion, alongside in-memory customer management. This provides a foundation for expanding validation, customer persistence, and broader O2C workflows.
+## Current Project Progress
+
+The O2C (Order-to-Cash) Application Platform has evolved from a basic backend skeleton into a functional FastAPI application with structured REST API endpoints, health checks, project metadata, Pydantic-based request validation, and SQLAlchemy-powered database integration using SQLite.
+
+The application currently implements CRUD operations for **customers, sales orders, invoices, and payments**, along with payment allocation functionality that connects incoming payments to outstanding invoices.
+
+### Key Features Implemented
+
+- **FastAPI Application Structure:** Health check endpoint, root endpoint, project information, and organized API routes.
+- **Database Integration:** SQLite database with SQLAlchemy ORM models, database sessions, and dependency injection.
+- **Customer Management:** Create, retrieve, update, and delete customers.
+- **Sales Order Management:** Create, retrieve, update, and delete sales orders, with database persistence.
+- **Invoice Management:** Create, retrieve, update, and delete invoices, with customer and sales order existence checks during creation.
+- **Payment Management:** Create, retrieve, update, and delete payments, including payment references, dates, amounts, methods, and statuses.
+- **Payment Allocation:** Allocate payments against invoices while validating available payment balances, invoice outstanding balances, and customer consistency.
+- **Request Validation:** Pydantic schemas, enumerated values for business statuses and payment methods, and numeric constraints for monetary amounts.
+- **Error Handling:** HTTP exceptions for missing records and invalid payment allocation requests.
+
+### Current Database Models
+
+The application currently defines five SQLAlchemy database models:
+
+1. `CustomerDB` — Customer master data and payment terms.
+2. `SalesOrderDB` — Sales order details and order status.
+3. `InvoiceDB` — Invoice information, due dates, amounts, and payment status.
+4. `PaymentDB` — Incoming payment details and payment status.
+5. `PaymentAllocationDB` — Allocation of payments to invoices.
+
+### Current Development Status
+
+The project has established the core API and database foundation for an O2C workflow. Payment allocation now includes business rules to prevent over-allocation of payments and invoices, as well as allocations between different customers.
+
+The next stage focuses on strengthening business validations, completing and testing end-to-end O2C workflows, improving consistency across CRUD operations, and expanding the application toward a more modular, maintainable architecture.
+
+**Note:** Customer records are now database-backed; the earlier in-memory customer management approach has been replaced with SQLAlchemy persistence. Some update and retrieval operations, particularly for payment allocations, can be expanded as development continues.
+
 
 ## Getting Started
 
