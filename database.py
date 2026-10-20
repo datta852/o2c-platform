@@ -54,6 +54,14 @@ class PaymentDB(Base):
     payment_method=Column(String)
     payment_status=Column(String)
 
+class PaymentAllocationDB(Base):
+
+    __tablename__="PaymentAllocations"
+
+    allocation_id=Column(Integer,primary_key=True,index=True)
+    payment_id=Column(Integer,ForeignKey("Payments.payment_id"))
+    invoice_id=Column(Integer,ForeignKey("Invoices.invoice_id"))
+    allocated_amount=Column(Numeric(15,2))
 
 def get_db():
     db=SessionLocal()

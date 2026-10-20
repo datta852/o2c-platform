@@ -1,7 +1,7 @@
 from enum import Enum, Enum
 from fastapi import FastAPI,HTTPException,Depends
 from pydantic import BaseModel,ConfigDict,Field
-from database import get_db,CustomerDB,SalesOrderDB,InvoiceDB,PaymentDB
+from database import get_db,CustomerDB,SalesOrderDB,InvoiceDB,PaymentDB,PaymentAllocationDB
 from sqlalchemy.orm import Session
 from datetime import date
 
@@ -128,6 +128,19 @@ class PaymentResponse(BaseModel):
 
     model_config=ConfigDict(from_attributes=True)
 
+class PaymentAllocationCreate(BaseModel):
+    payment_id:int
+    invoice_id:int
+    allocated_amount:float=Field(gt=0,description="Allocated amount must be a positive value")
+
+class PaymentAllocationResponse(BaseModel):
+    allocation_id:int
+    payment_id:int
+    invoice_id:int
+    allocated_amount:float=Field(gt=0,description="Allocated amount must be a positive value")
+
+    model_config=ConfigDict(from_attributes=True)
+
 app = FastAPI()
 
 
@@ -244,7 +257,61 @@ def create_payments(payment:PaymentCreate,db:Session=Depends(get_db)):
 
     return db_payment
 
+@app.post("/payment_allocations",response_model=PaymentAllocationResponse)
+def create_payment_allocation(allocation:PaymentAllocationCreate,db:Session=Depends(get_db)):
 
+    payment=db.query(PaymentDB).filter(PaymentDB.payment_id==allocation.payment_id).first()
+
+    invoice=db.query(InvoiceDB).filter(InvoiceDB.invoice_id==allocation.invoice_id).first()
+
+    if not payment:
+        raise HTTPException(
+            status_code=404,
+            detail="Payment not found")
+
+    if not invoice:
+        raise HTTPException(
+            status_code=404,
+            detail="Invoice not found")
+
+    existing_allocations=db.query(PaymentAllocationDB).filter(PaymentAllocationDB.payment_id==allocation.payment_id).all()
+
+    total_allocated_amount=sum(amount.allocated_amount for amount in existing_allocations)
+
+    remaining_amount=payment.payment_amount-total_allocated_amount
+
+    if allocation.allocated_amount > remaining_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Allocated amount exceeds the remaining payment amount. Remaining amount: {remaining_amount}")
+
+    existing_invoice_allocations=db.query(PaymentAllocationDB).filter(PaymentAllocationDB.invoice_id==allocation.invoice_id).all()
+
+    total_invoice_allocated_amount=sum(amount.allocated_amount for amount in existing_invoice_allocations)
+
+    outstanding_balance=invoice.invoice_amount-total_invoice_allocated_amount
+
+    if allocation.allocated_amount > outstanding_balance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Allocated amount exceeds the outstanding balance of the invoice. Outstanding balance: {outstanding_balance}")
+
+    if payment.customer_id != invoice.customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Payment and invoice belong to different customers")
+
+    payment_allocation=PaymentAllocationDB(
+        payment_id=allocation.payment_id,
+        invoice_id=allocation.invoice_id,
+        allocated_amount=allocation.allocated_amount
+    )
+
+    db.add(payment_allocation)
+    db.commit()
+    db.refresh(payment_allocation)
+
+    return payment_allocation
 
 @app.get("/customers",response_model=list[CustomerResponse])
 def get_customers(db:Session=Depends(get_db)):
