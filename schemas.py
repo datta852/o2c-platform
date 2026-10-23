@@ -1,5 +1,6 @@
 from enum import Enum
 from datetime import date
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -126,12 +127,15 @@ class PaymentResponse(BaseModel):
 class PaymentAllocationCreate(BaseModel):
     payment_id:int
     invoice_id:int
-    allocated_amount:float=Field(gt=0,description="Allocated amount must be a positive value")
+    allocated_amount:Decimal=Field(gt=0,description="Allocated amount must be a positive value")
+
+class PaymentAllocationUpdate(BaseModel):
+    allocated_amount:Decimal=Field(gt=0,description="Allocated amount must be a positive value")
 
 class PaymentAllocationResponse(BaseModel):
     allocation_id:int
     payment_id:int
     invoice_id:int
-    allocated_amount:float=Field(gt=0,description="Allocated amount must be a positive value")
+    allocated_amount:Decimal=Field(gt=0,description="Allocated amount must be a positive value")
 
     model_config=ConfigDict(from_attributes=True)
