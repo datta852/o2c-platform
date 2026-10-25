@@ -5,6 +5,7 @@ from routers.sales_orders import router as order_router
 from routers.invoices import router as invoice_router
 from routers.payments import router as payment_router
 from routers.payment_allocations import router as payment_allocation_router
+from routers.collections import router as collections_router, receivables_router
 
 
 app = FastAPI()
@@ -13,6 +14,8 @@ app.include_router(order_router)
 app.include_router(invoice_router)
 app.include_router(payment_router)
 app.include_router(payment_allocation_router)
+app.include_router(collections_router)
+app.include_router(receivables_router)
 
 @app.get("/")
 def root():

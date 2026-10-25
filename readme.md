@@ -1,111 +1,114 @@
-# O2C Platform
+# O2C Automation Platform
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Active%20Development-orange)
-![License](https://img.shields.io/badge/License-MIT-blue)
+A small Order-to-Cash API built with FastAPI, Pydantic, SQLAlchemy, and SQLite. It models customer orders, invoices, cash receipts, allocation/reconciliation decisions, receivables, and collections actions.
 
-## Overview
+## Current capabilities
 
-O2C Platform is a lightweight backend application built with FastAPI to support customer management and service monitoring. The project currently includes a basic API structure with endpoints for health checks, project information, creating customers, and retrieving customer records by ID.
+- Customer, sales order, invoice, and payment APIs.
+- Fixed-precision decimal amounts with request validation.
+- Payment allocation across invoices with customer, lifecycle, and balance checks.
+- Payment reconciliation plans that can match one payment to multiple invoices, leave it partially/unmatched, record exceptions, and be safely retried with an `Idempotency-Key`.
+- Reconciliation status lookup and audit history.
+- Receivables listing and summary with outstanding and overdue balances.
+- Configurable dunning thresholds and an idempotent collection run that records scheduled actions and outcomes. It does not send email or make calls to external services.
+- FastAPI OpenAPI and Swagger UI at `/docs`.
 
-## Features
+## Architecture
 
-- Health monitoring endpoint
-- Project metadata endpoint
-- Customer creation API
-- Customer lookup by ID
-- In-memory data storage for early-stage development
+`main.py` registers route modules. Routes validate requests with Pydantic schemas, load ORM records through SQLAlchemy sessions, enforce business rules, and persist related changes in one commit. `database.py` defines entities and SQLite configuration; `schemas.py` defines API contracts and enums. Tests use synthetic entities in a separate in-memory SQLite database.
 
-## Tech Stack
+## Setup
 
-- Python
-- FastAPI
-- Pydantic
+Use Python 3.14 (the version used for local verification) and install the pinned project requirements:
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Returns a basic welcome response |
-| GET | `/health` | Checks service health status |
-| GET | `/about` | Returns project information |
-| POST | `/customers` | Creates a new customer record |
-| GET | `/customers` | Fetches the complete list of customers |
-| GET | `/customers/{customer_id}` | Fetches a customer by ID |
-| PUT | `/customers/{customer_id}` | Modifies a customer by ID |
-| DELETE | `/customers/{customer_id}` | Deletes a customer by ID |
-| POST | `/orders` | Creates a new sales order |
-| GET | `/orders` | Fetches the complete list of orders |
-| GET | `/orders/{order_id}` | Fetches a order by ID |
-| PUT | `/orders/{order_id}` | Modifies a order by ID |
-| DELETE | `/orders/{order_id}` | Deletes a order by ID |
-| POST | `/invoices` | Creates a new invoice |
-| GET | `/invoices` | Fetches the complete list of invoices |
-| GET | `/invoices/{invoice_id}` | Fetches an Invoice by ID |
-| PUT | `/invoices/{invoice_id}` | Modifies an Invoice by ID |
-| DELETE | `/invoices/{invoice_id}` | Deletes an Invoice by ID |
-| POST | `/payments` | Creates a new payment |
-| GET | `/payments` | Fetches the complete list of payment |
-| GET | `/payments/{payment_id}` | Fetches an payment by ID |
-| PUT | `/payments/{payment_id}` | Modifies an payment by ID |
-| DELETE | `/payments/{payment_id}` | Deletes an payment by ID |
-
-## Current Progress
-
-## Current Project Progress
-
-The O2C (Order-to-Cash) Application Platform has evolved from a basic backend skeleton into a functional FastAPI application with structured REST API endpoints, health checks, project metadata, Pydantic-based request validation, and SQLAlchemy-powered database integration using SQLite.
-
-The application currently implements CRUD operations for **customers, sales orders, invoices, and payments**, along with payment allocation functionality that connects incoming payments to outstanding invoices.
-
-### Key Features Implemented
-
-- **FastAPI Application Structure:** Health check endpoint, root endpoint, project information, and organized API routes.
-- **Database Integration:** SQLite database with SQLAlchemy ORM models, database sessions, and dependency injection.
-- **Customer Management:** Create, retrieve, update, and delete customers.
-- **Sales Order Management:** Create, retrieve, update, and delete sales orders, with database persistence.
-- **Invoice Management:** Create, retrieve, update, and delete invoices, with customer and sales order existence checks during creation.
-- **Payment Management:** Create, retrieve, update, and delete payments, including payment references, dates, amounts, methods, and statuses.
-- **Payment Allocation:** Allocate payments against invoices while validating available payment balances, invoice outstanding balances, and customer consistency.
-- **Request Validation:** Pydantic schemas, enumerated values for business statuses and payment methods, and numeric constraints for monetary amounts.
-- **Error Handling:** HTTP exceptions for missing records and invalid payment allocation requests.
-
-### Current Database Models
-
-The application currently defines five SQLAlchemy database models:
-
-1. `CustomerDB` — Customer master data and payment terms.
-2. `SalesOrderDB` — Sales order details and order status.
-3. `InvoiceDB` — Invoice information, due dates, amounts, and payment status.
-4. `PaymentDB` — Incoming payment details and payment status.
-5. `PaymentAllocationDB` — Allocation of payments to invoices.
-
-### Current Development Status
-
-The project has established the core API and database foundation for an O2C workflow. Payment allocation now includes business rules to prevent over-allocation of payments and invoices, as well as allocations between different customers.
-
-The next stage focuses on strengthening business validations, completing and testing end-to-end O2C workflows, improving consistency across CRUD operations, and expanding the application toward a more modular, maintainable architecture.
-
-**Note:** Customer records are now database-backed; the earlier in-memory customer management approach has been replaced with SQLAlchemy persistence. Some update and retrieval operations, particularly for payment allocations, can be expanded as development continues.
-
-
-## Getting Started
-
-```bash
-pip install fastapi
-fastapi dev
+```powershell
+py -3.14 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-Then open:
+The default database URL is `sqlite:///./o2c.db`. Set `DATABASE_URL` before migrating or starting the app to select another SQLAlchemy-supported database URL. The app does not create or migrate tables on import. Apply the versioned schema first:
 
-- `http://127.0.0.1:8000/health`
-- `http://127.0.0.1:8000/docs`
+```powershell
+alembic upgrade head
+fastapi dev main.py
+```
 
-## Roadmap
+For an existing database from the earlier version, stop the app and make a verified backup first. Confirm that its five original tables match revision `0001_core`; then mark that baseline and apply the additive/integrity migration:
 
-- Add persistent database storage
-- Improve customer validation and error handling
-- Add authentication and authorization
-- Expand business logic for O2C workflows
-- Deploy to a production-ready environment
+```powershell
+Copy-Item .\o2c.db .\o2c.db.backup
+alembic stamp 0001_core
+alembic upgrade head
+```
+
+Revision `0002_o2c_workflows` checks for null, non-positive, and duplicate allocation data before tightening constraints, and aborts with a message when cleanup is needed. The migration was verified on an isolated SQLite database containing synthetic legacy rows; this project has not run it against the repository's existing `o2c.db`.
+
+Set `O2C_API_KEY` to require the `X-API-Key` header on business and receivables routes. If unset, the API allows requests for local development; keep the server bound to localhost in that mode. `/health` remains public. Never commit the key or store it in source control.
+
+## API outline
+
+| Area | Endpoints |
+|---|---|
+| Customers | `/customers/` create/list; `/customers/{id}` get/update/delete |
+| Sales orders | `/orders/` create/list; `/orders/{id}` get/update/delete |
+| Invoices | `/invoices/` create/list; `/invoices/{id}` get/update; DELETE is rejected because invoices are financial records |
+| Payments | `/payments/` create/list; `/payments/{id}` get/update/delete |
+| Reconciliation | `POST /payments/{id}/reconcile`, `GET /payments/{id}/reconciliation`, `GET /payments/{id}/reconciliation-audit` |
+| Manual allocations | `/payment_allocations/` create/list; `/payment_allocations/{id}` get/update/delete |
+| Receivables | `GET /receivables/`, `GET /receivables/summary` |
+| Collections | `POST /collections/rules`, `GET /collections/rules`, `PUT /collections/rules/{id}`, `POST /collections/run`, `GET /collections/actions`, `PUT /collections/actions/{id}` |
+| Service | `GET /health`, `GET /about` |
+
+## Reconciliation example
+
+Create a completed payment and outstanding invoice, then submit the complete allocation plan:
+
+```http
+POST /payments/42/reconcile
+Idempotency-Key: bank-statement-row-2026-10-25-001
+Content-Type: application/json
+
+{
+  "allocations": [
+    {"invoice_id": 1001, "allocated_amount": "125.00"},
+    {"invoice_id": 1002, "allocated_amount": "75.00"}
+  ]
+}
+```
+
+The request describes the desired allocation plan for that payment. Reusing the same key and payload returns the stored response. Reusing a key with a different payment or payload returns `409`. An empty allocation list records an unmatched payment; invalid matches create an exception record and leave the previous allocation plan intact. Successful corrected requests can resolve an exception under a new key.
+
+## Receivables and collection run
+
+`GET /receivables/summary?as_of=2026-10-25` returns total outstanding and overdue balances. `POST /collections/rules` configures an aging threshold and action type. `POST /collections/run?as_of=2026-10-25` creates one scheduled action per eligible invoice/rule pair; rerunning it does not duplicate actions. `PUT /collections/actions/{id}` records completion or failure and an outcome. A future worker or messaging integration is not included.
+
+## Synthetic demo walkthrough
+
+1. In Swagger UI, create a customer, a `PROCESSED` sales order, an `OPEN` invoice linked to that order, and a `COMPLETED` payment for the same customer.
+2. Call `POST /payments/{payment_id}/reconcile` with a new `Idempotency-Key` header and an allocation plan. Inspect the result and history through the reconciliation status and audit endpoints.
+3. Create a dunning rule (for example, 7 days overdue with action type `EMAIL_REMINDER`) and call `POST /collections/run?as_of=YYYY-MM-DD` with a date after the invoice due date.
+4. Inspect `/receivables/summary` and `/collections/actions`, then record a synthetic completed or failed outcome for the scheduled action.
+
+## Tests
+
+Run the standard-library suite from the repository root:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Tests use synthetic records and an in-memory database; they do not open the default `o2c.db`.
+
+## Known limitations
+
+- The MVP assumes a single currency; currency conversion and currency-specific balances are not modeled.
+- Reconciliation requests use row locks on databases that support them; SQLite ignores those locks and serializes writes, so high-concurrency production workloads need PostgreSQL.
+- Reconciliation audit records do not identify a user; API-key authentication is optional and offers no role-based authorization.
+- Collection runs schedule records only. There is no background worker or email integration.
+- Schema evolution is versioned, but legacy data must pass migration preflight checks; back up any existing database before migration.
+- No request pagination is implemented for the legacy customer/order/invoice/payment list endpoints; receivables and collection actions are paginated.
+
+## SDE-1 topics demonstrated
+
+Relational modeling and constraints, REST contracts and status codes, fixed-precision money, multi-record validation, transactions, idempotency, audit trails, business-rule testing, and trade-offs between a simple SQLite MVP and production concurrency/migrations.
