@@ -17,6 +17,7 @@ from schemas import (
     PaymentReconciliationAuditResponse,
 )
 from security import require_api_key
+from reconciliation_state import synchronize_reconciliation_state
 
 router = APIRouter(
     prefix="/payments",
@@ -237,21 +238,14 @@ def reconcile_payment(
                 else:
                     invoice.invoice_status = InvoiceStatus.partially_paid
 
-        total_allocated = sum(allocation_plan.values(), Decimal("0"))
-        if total_allocated == 0:
-            status = ReconciliationStatus.unmatched
-        elif total_allocated == payment.payment_amount:
-            status = ReconciliationStatus.reconciled
-        else:
-            status = ReconciliationStatus.partially_reconciled
-        reconciliation.status = status
-        reconciliation.exception_reason = None
-        reconciliation.reconciled_at = now if status == ReconciliationStatus.reconciled else None
+        reconciliation, total_allocated, _ = synchronize_reconciliation_state(db, payment)
+        status = reconciliation.status
+        exception_reason = reconciliation.exception_reason
 
-    actual_allocated = (
-        sum((item.allocated_amount for item in current_allocations), Decimal("0"))
-        if exception_reason else sum(allocation_plan.values(), Decimal("0"))
-    )
+    actual_allocations = db.query(PaymentAllocationDB.allocated_amount).filter(
+        PaymentAllocationDB.payment_id == payment_id
+    ).all()
+    actual_allocated = sum((amount for (amount,) in actual_allocations), Decimal("0"))
     response = PaymentReconciliationResponse(
         payment_id=payment_id,
         status=status,
@@ -302,32 +296,64 @@ def reconcile_payment(
 
 @router.get("/{payment_id}/reconciliation", response_model=PaymentReconciliationResponse)
 def get_payment_reconciliation(payment_id: int, db: Session = Depends(get_db)):
-    payment = db.query(PaymentDB).filter(PaymentDB.payment_id == payment_id).first()
-    if not payment:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    reconciliation = db.query(PaymentReconciliationDB).filter(
-        PaymentReconciliationDB.payment_id == payment_id
-    ).first()
-    allocations = db.query(PaymentAllocationDB.allocated_amount).filter(
-        PaymentAllocationDB.payment_id == payment_id
-    ).all()
-    allocated = sum((amount for (amount,) in allocations), Decimal("0"))
-    if reconciliation:
-        status = reconciliation.status
-    elif allocated == 0:
-        status = ReconciliationStatus.unmatched
-    elif allocated >= payment.payment_amount:
-        status = ReconciliationStatus.reconciled
-    else:
-        status = ReconciliationStatus.partially_reconciled
-    return PaymentReconciliationResponse(
-        payment_id=payment_id,
-        status=status,
-        allocated_amount=allocated,
-        unapplied_amount=max(payment.payment_amount - allocated, Decimal("0")),
-        exception_reason=reconciliation.exception_reason if reconciliation else None,
-        reconciled_at=reconciliation.reconciled_at if reconciliation else None,
-    )
+    # Locking the payment serializes GET-triggered creation/repair with other
+    # reconciliation operations on databases that support row locks. The unique
+    # constraint remains the final safeguard; retry once if two readers race to
+    # create a previously missing reconciliation row.
+    for attempt in range(2):
+        try:
+            payment = db.query(PaymentDB).filter(
+                PaymentDB.payment_id == payment_id
+            ).with_for_update().first()
+            if not payment:
+                raise HTTPException(status_code=404, detail="Payment not found")
+            reconciliation = db.query(PaymentReconciliationDB).filter(
+                PaymentReconciliationDB.payment_id == payment_id
+            ).first()
+            previous_state = (
+                (reconciliation.status, reconciliation.exception_reason, reconciliation.reconciled_at)
+                if reconciliation is not None else None
+            )
+            reconciliation, allocated, _ = synchronize_reconciliation_state(
+                db, payment, clear_exception=False, refresh_reconciled_at=False
+            )
+            current_state = (
+                reconciliation.status, reconciliation.exception_reason, reconciliation.reconciled_at
+            )
+            if previous_state != current_state:
+                db.add(PaymentReconciliationAuditDB(
+                    payment_id=payment_id,
+                    action="RECONCILIATION_STATE_REPAIRED",
+                    details=json.dumps({
+                        "previous_status": (
+                            getattr(previous_state[0], "value", previous_state[0])
+                            if previous_state else None
+                        ),
+                        "previous_exception_reason": previous_state[1] if previous_state else None,
+                        "status": reconciliation.status.value,
+                        "exception_reason": reconciliation.exception_reason,
+                        "allocated_amount": str(allocated),
+                        "payment_amount": str(payment.payment_amount),
+                    }, sort_keys=True),
+                    occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                ))
+                db.commit()
+            return PaymentReconciliationResponse(
+                payment_id=payment_id,
+                status=reconciliation.status,
+                allocated_amount=allocated,
+                unapplied_amount=max(payment.payment_amount - allocated, Decimal("0")),
+                exception_reason=reconciliation.exception_reason,
+                reconciled_at=reconciliation.reconciled_at,
+            )
+        except IntegrityError:
+            db.rollback()
+            if attempt == 1:
+                raise
+        except Exception:
+            db.rollback()
+            raise
+    raise HTTPException(status_code=409, detail="Could not synchronize payment reconciliation state")
 
 
 @router.get("/{payment_id}/reconciliation-audit", response_model=list[PaymentReconciliationAuditResponse])

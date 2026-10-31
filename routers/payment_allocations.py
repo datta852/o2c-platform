@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from decimal import Decimal
 from datetime import datetime, timezone
 
@@ -12,6 +13,7 @@ from database import (
     PaymentAllocationDB,
     PaymentReconciliationAuditDB,
 )
+from reconciliation_state import synchronize_reconciliation_state
 from schemas import (
     PaymentAllocationCreate,
     PaymentAllocationResponse,
@@ -26,6 +28,15 @@ router = APIRouter(
     tags=["Payment Allocations"],
     dependencies=[Depends(require_api_key)],
 )
+
+
+@contextmanager
+def _rollback_on_error(db: Session):
+    try:
+        yield
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _invoice_allocated_total(db: Session, invoice_id: int) -> Decimal:
@@ -112,26 +123,25 @@ def create_payment_allocation(allocation:PaymentAllocationCreate,db:Session=Depe
         allocated_amount=allocation.allocated_amount
     )
 
-    db.add(payment_allocation)
-    db.add(PaymentReconciliationAuditDB(
-        payment_id=payment.payment_id,
-        action="MANUAL_ALLOCATION_CREATED",
-        details=json.dumps({"invoice_id": invoice.invoice_id, "allocated_amount": str(allocation.allocated_amount)}),
-        occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
-    ))
+    with _rollback_on_error(db):
+        db.add(payment_allocation)
+        db.flush()
+        reconciliation, _, exception_cleared = synchronize_reconciliation_state(db, payment)
+        db.add(PaymentReconciliationAuditDB(
+            payment_id=payment.payment_id,
+            action="MANUAL_ALLOCATION_CREATED",
+            details=json.dumps({
+                "invoice_id": invoice.invoice_id,
+                "allocated_amount": str(allocation.allocated_amount),
+                "reconciliation_status": reconciliation.status.value,
+                "exception_cleared": exception_cleared,
+            }),
+            occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ))
 
-    new_total = total_invoice_allocated_amount + allocation.allocated_amount
-    
-    if new_total == invoice.invoice_amount:
-        invoice.invoice_status = InvoiceStatus.paid
-    elif new_total < invoice.invoice_amount:
-        invoice.invoice_status = InvoiceStatus.partially_paid
-
-    try:
-       db.commit()
-    except Exception:
-        db.rollback()
-        raise
+        new_total = total_invoice_allocated_amount + allocation.allocated_amount
+        _set_invoice_status(invoice, new_total)
+        db.commit()
 
     db.refresh(payment_allocation)
 
@@ -219,26 +229,26 @@ def update_payment_allocation(payment_allocation_id:int,payment_allocation:Payme
     if payment.customer_id != invoice.customer_id:
         raise HTTPException(status_code=400, detail="Payment and invoice belong to different customers")
 
-    old_amount = db_payment_allocation.allocated_amount
-    db_payment_allocation.allocated_amount = payment_allocation.allocated_amount
-    _set_invoice_status(invoice, total_invoice_allocated_elsewhere + payment_allocation.allocated_amount)
-    db.add(PaymentReconciliationAuditDB(
-        payment_id=payment.payment_id,
-        action="MANUAL_ALLOCATION_UPDATED",
-        details=json.dumps({
-            "invoice_id": invoice.invoice_id,
-            "allocation_id": payment_allocation_id,
-            "old_amount": str(old_amount),
-            "new_amount": str(payment_allocation.allocated_amount),
-        }),
-        occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
-    ))
-
-    try:
+    with _rollback_on_error(db):
+        old_amount = db_payment_allocation.allocated_amount
+        db_payment_allocation.allocated_amount = payment_allocation.allocated_amount
+        _set_invoice_status(invoice, total_invoice_allocated_elsewhere + payment_allocation.allocated_amount)
+        db.flush()
+        reconciliation, _, exception_cleared = synchronize_reconciliation_state(db, payment)
+        db.add(PaymentReconciliationAuditDB(
+            payment_id=payment.payment_id,
+            action="MANUAL_ALLOCATION_UPDATED",
+            details=json.dumps({
+                "invoice_id": invoice.invoice_id,
+                "allocation_id": payment_allocation_id,
+                "old_amount": str(old_amount),
+                "new_amount": str(payment_allocation.allocated_amount),
+                "reconciliation_status": reconciliation.status.value,
+                "exception_cleared": exception_cleared,
+            }),
+            occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ))
         db.commit()
-    except Exception:
-        db.rollback()
-        raise
 
     db.refresh(db_payment_allocation)
 
@@ -255,28 +265,30 @@ def delete_payment_allocation(payment_allocation_id:int,db:Session=Depends(get_d
             detail="Payment allocation not found"
         )
     
-    invoice = db.query(InvoiceDB).filter(InvoiceDB.invoice_id == db_payment_allocation.invoice_id).first()
-    payment = db.query(PaymentDB).filter(PaymentDB.payment_id == db_payment_allocation.payment_id).first()
+    payment = db.query(PaymentDB).filter(PaymentDB.payment_id == db_payment_allocation.payment_id).with_for_update().first()
+    invoice = db.query(InvoiceDB).filter(InvoiceDB.invoice_id == db_payment_allocation.invoice_id).with_for_update().first()
+    if invoice is None or payment is None:
+        raise HTTPException(status_code=409, detail="Payment allocation has a missing related record")
     deleted_amount = db_payment_allocation.allocated_amount
 
     new_total = _invoice_allocated_total(db, invoice.invoice_id) - db_payment_allocation.allocated_amount
-    db.delete(db_payment_allocation)
-    _set_invoice_status(invoice, new_total)
-    db.add(PaymentReconciliationAuditDB(
-        payment_id=payment.payment_id,
-        action="MANUAL_ALLOCATION_DELETED",
-        details=json.dumps({
-            "invoice_id": invoice.invoice_id,
-            "allocation_id": payment_allocation_id,
-            "allocated_amount": str(deleted_amount),
-        }),
-        occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
-    ))
-
-    try:
+    with _rollback_on_error(db):
+        db.delete(db_payment_allocation)
+        db.flush()
+        _set_invoice_status(invoice, new_total)
+        reconciliation, _, exception_cleared = synchronize_reconciliation_state(db, payment)
+        db.add(PaymentReconciliationAuditDB(
+            payment_id=payment.payment_id,
+            action="MANUAL_ALLOCATION_DELETED",
+            details=json.dumps({
+                "invoice_id": invoice.invoice_id,
+                "allocation_id": payment_allocation_id,
+                "allocated_amount": str(deleted_amount),
+                "reconciliation_status": reconciliation.status.value,
+                "exception_cleared": exception_cleared,
+            }),
+            occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ))
         db.commit()
-    except Exception:
-        db.rollback()
-        raise
 
     return {"message": f"Payment allocation {payment_allocation_id} deleted successfully."}
