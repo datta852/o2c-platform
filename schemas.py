@@ -75,6 +75,8 @@ class SalesOrderCreate(BaseModel):
     customer_id:int
     order_date:date
     order_amount:PositiveMoney
+
+class SalesOrderUpdate(SalesOrderCreate):
     order_status:order_Status
 
 class SalesOrderResponse(BaseModel):

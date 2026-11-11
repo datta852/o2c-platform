@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 # database.py creates its configured SQLite file when imported. Import it while
 # the working directory is temporary so test discovery never touches o2c.db.
@@ -28,7 +29,7 @@ try:
     )
     from routers.payments import reconcile_payment, get_payment_reconciliation, create_payments
     from routers.customers import create_customer
-    from routers.sales_orders import create_sales_orders
+    from routers.sales_orders import create_sales_orders, update_sales_orders
     from routers.invoices import create_invoice, get_invoice, delete_invoice
     from routers.collections import (
         create_dunning_rule, run_collections, list_collection_actions,
@@ -39,7 +40,7 @@ try:
         ReconciliationAllocation, ReconciliationStatus, DunningRuleCreate,
         CollectionActionType, CollectionActionOutcome, CollectionActionStatus,
         PaymentCreate, PaymentMethod, PaymentStatus, CustomerCreate,
-        PaymentTerms, SalesOrderCreate, order_Status, InvoiceCreate,
+        PaymentTerms, SalesOrderCreate, SalesOrderUpdate, order_Status, InvoiceCreate,
     )
     from main import app
     from security import require_api_key
@@ -111,6 +112,101 @@ class PaymentAllocationMutationTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         Base.metadata.drop_all(self.engine)
+
+    def add_credit_test_customer(self, credit_limit):
+        customer = CustomerDB(
+            name=f"Credit Update {uuid4().hex}",
+            country="US",
+            email=f"credit-update-{uuid4().hex}@example.com",
+            credit_limit=credit_limit,
+            payment_terms="Net 30",
+        )
+        self.db.add(customer)
+        self.db.flush()
+        return customer
+
+    def create_credit_test_order(self, customer_id, amount):
+        return create_sales_orders(SalesOrderCreate(
+            customer_id=customer_id,
+            order_date=date(2026, 2, 1),
+            order_amount=amount,
+        ), self.db)
+
+    def update_credit_test_order(self, order, customer_id, amount, status):
+        return update_sales_orders(order.order_id, SalesOrderUpdate(
+            customer_id=customer_id,
+            order_date=date(2026, 2, 1),
+            order_amount=amount,
+            order_status=status,
+        ), self.db)
+
+    def test_blocked_order_cannot_be_promoted_through_generic_update(self):
+        from fastapi import HTTPException
+
+        customer = self.add_credit_test_customer(Decimal("0.00"))
+        blocked_order = self.create_credit_test_order(customer.id, Decimal("100.00"))
+        self.assertEqual(blocked_order.order_status, "BLOCKED")
+
+        for target_status in (
+            order_Status.open,
+            order_Status.awaiting_approval,
+            order_Status.processed,
+        ):
+            with self.subTest(target_status=target_status.value):
+                with self.assertRaises(HTTPException) as error:
+                    self.update_credit_test_order(
+                        blocked_order, customer.id, Decimal("100.00"), target_status
+                    )
+                self.assertEqual(error.exception.status_code, 409)
+                self.assertIn("cannot be promoted", error.exception.detail)
+
+        persisted = self.db.get(SalesOrderDB, blocked_order.order_id)
+        self.assertEqual(persisted.order_status, "BLOCKED")
+
+    def test_open_order_can_be_processed_without_double_counting_it(self):
+        customer = self.add_credit_test_customer(Decimal("100.00"))
+        open_order = self.create_credit_test_order(customer.id, Decimal("80.00"))
+        self.assertEqual(open_order.order_status, "OPEN")
+
+        processed = self.update_credit_test_order(
+            open_order, customer.id, Decimal("80.00"), order_Status.processed
+        )
+
+        self.assertEqual(processed.order_status, "PROCESSED")
+
+    def test_amount_update_checks_available_credit_and_excludes_current_order(self):
+        from fastapi import HTTPException
+
+        customer = self.add_credit_test_customer(Decimal("100.00"))
+        open_order = self.create_credit_test_order(customer.id, Decimal("80.00"))
+
+        updated = self.update_credit_test_order(
+            open_order, customer.id, Decimal("90.00"), order_Status.open
+        )
+        self.assertEqual(updated.order_amount, Decimal("90.00"))
+
+        with self.assertRaises(HTTPException) as error:
+            self.update_credit_test_order(
+                updated, customer.id, Decimal("101.00"), order_Status.open
+            )
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertIn("exceed the customer's credit limit", error.exception.detail)
+
+    def test_customer_change_is_checked_against_target_customer_exposure(self):
+        from fastapi import HTTPException
+
+        source_customer = self.add_credit_test_customer(Decimal("1000.00"))
+        target_customer = self.add_credit_test_customer(Decimal("100.00"))
+        moving_order = self.create_credit_test_order(source_customer.id, Decimal("20.00"))
+        self.create_credit_test_order(target_customer.id, Decimal("90.00"))
+
+        with self.assertRaises(HTTPException) as error:
+            self.update_credit_test_order(
+                moving_order, target_customer.id, Decimal("20.00"), order_Status.open
+            )
+
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertIn("exceed the customer's credit limit", error.exception.detail)
 
     def test_update_missing_allocation_returns_404(self):
         from fastapi import HTTPException
@@ -519,6 +615,11 @@ class PaymentAllocationMutationTests(unittest.TestCase):
             credit_limit=Decimal("1000.00"), payment_terms=PaymentTerms.net_30,
         ), self.db)
         order = create_sales_orders(SalesOrderCreate(
+            customer_id=customer.id,
+            order_date=date(2026, 1, 1),
+            order_amount=Decimal("75.25"),
+        ), self.db)
+        order = update_sales_orders(order.order_id, SalesOrderUpdate(
             customer_id=customer.id,
             order_date=date(2026, 1, 1),
             order_amount=Decimal("75.25"),

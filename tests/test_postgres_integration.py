@@ -83,35 +83,55 @@ class PostgreSQLAPITests(unittest.TestCase):
                     self.connection.close()
 
     @staticmethod
-    def new_customer_payload():
+    def new_customer_payload(credit_limit="25000.00"):
         suffix = uuid4().hex
         return {
             "name": f"PostgreSQL Integration {suffix}",
             "country": "IN",
             "email": f"o2c-integration-{suffix}@example.test",
-            "credit_limit": "25000.00",
+            "credit_limit": str(credit_limit),
             "payment_terms": "Net_30",
         }
 
-    def create_customer(self):
-        response = self.client.post("/customers/", json=self.new_customer_payload())
+    def create_customer(self, credit_limit="25000.00"):
+        response = self.client.post(
+            "/customers/", json=self.new_customer_payload(credit_limit)
+        )
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
-    def create_invoice(self, customer_id, amount):
-        today = date.today()
-        order_response = self.client.post(
-            "/orders/",
+    def create_order(self, customer_id, amount, requested_status=None):
+        payload = {
+            "customer_id": customer_id,
+            "order_date": date.today().isoformat(),
+            "order_amount": str(amount),
+        }
+        if requested_status is not None:
+            payload["order_status"] = requested_status
+        response = self.client.post("/orders/", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def update_order_status(self, order, status):
+        response = self.client.put(
+            f"/orders/{order['order_id']}",
             json={
-                "customer_id": customer_id,
-                "order_date": today.isoformat(),
-                "order_amount": str(amount),
-                "order_status": "PROCESSED",
+                "customer_id": order["customer_id"],
+                "order_date": order["order_date"],
+                "order_amount": str(order["order_amount"]),
+                "order_status": status,
             },
         )
-        self.assertEqual(order_response.status_code, 200, order_response.text)
-        order_id = order_response.json()["order_id"]
+        return response
 
+    def create_invoice(self, customer_id, amount):
+        order = self.create_order(customer_id, amount)
+        processed = self.update_order_status(order, "PROCESSED")
+        self.assertEqual(processed.status_code, 200, processed.text)
+        return self.create_invoice_for_order(customer_id, order["order_id"], amount)
+
+    def create_invoice_for_order(self, customer_id, order_id, amount):
+        today = date.today()
         invoice_number = f"PG-INT-{uuid4().hex}"
         invoice_response = self.client.post(
             "/invoices/",
@@ -186,6 +206,18 @@ class PostgreSQLAPITests(unittest.TestCase):
         )
         self.assertEqual(order_response.status_code, 200, order_response.text)
         order_id = order_response.json()["order_id"]
+        self.assertEqual(order_response.json()["order_status"], "OPEN")
+
+        processed_order = self.client.put(
+            f"/orders/{order_id}",
+            json={
+                "customer_id": customer_id,
+                "order_date": order_date.isoformat(),
+                "order_amount": str(order_amount),
+                "order_status": "PROCESSED",
+            },
+        )
+        self.assertEqual(processed_order.status_code, 200, processed_order.text)
 
         retrieved_order = self.client.get(f"/orders/{order_id}")
         self.assertEqual(retrieved_order.status_code, 200, retrieved_order.text)
@@ -219,6 +251,146 @@ class PostgreSQLAPITests(unittest.TestCase):
         self.assertEqual(invoice_data["invoice_number"], invoice_number)
         self.assertEqual(Decimal(invoice_data["invoice_amount"]), invoice_amount)
         self.assertEqual(invoice_data["invoice_status"], "OPEN")
+
+    def test_order_below_credit_limit_is_created_open(self):
+        customer = self.create_customer(Decimal("1000.00"))
+
+        order = self.create_order(customer["id"], Decimal("500.00"))
+
+        self.assertEqual(order["order_status"], "OPEN")
+
+    def test_order_at_credit_limit_is_created_open(self):
+        customer = self.create_customer(Decimal("1000.00"))
+
+        order = self.create_order(customer["id"], Decimal("1000.00"))
+
+        self.assertEqual(order["order_status"], "OPEN")
+
+    def test_order_over_credit_limit_is_created_blocked(self):
+        customer = self.create_customer(Decimal("1000.00"))
+        self.create_order(customer["id"], Decimal("1000.00"))
+
+        order = self.create_order(customer["id"], Decimal("0.01"))
+
+        self.assertEqual(order["order_status"], "BLOCKED")
+
+    def test_client_order_status_cannot_override_credit_decision(self):
+        customer = self.create_customer(Decimal("100.00"))
+
+        below_limit_order = self.create_order(
+            customer["id"], Decimal("10.00"), requested_status="PROCESSED"
+        )
+        over_limit_order = self.create_order(
+            customer["id"], Decimal("1000.00"), requested_status="OPEN"
+        )
+
+        self.assertEqual(below_limit_order["order_status"], "OPEN")
+        self.assertEqual(over_limit_order["order_status"], "BLOCKED")
+
+    def test_blocked_order_cannot_be_promoted_through_generic_update(self):
+        customer = self.create_customer(Decimal("0.00"))
+        blocked_order = self.create_order(customer["id"], Decimal("100.00"))
+        self.assertEqual(blocked_order["order_status"], "BLOCKED")
+
+        for status in ("OPEN", "AWAITING_APPROVAL", "PROCESSED"):
+            with self.subTest(target_status=status):
+                response = self.update_order_status(blocked_order, status)
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertIn("cannot be promoted", response.json()["detail"])
+
+        current = self.client.get(f"/orders/{blocked_order['order_id']}")
+        self.assertEqual(current.status_code, 200, current.text)
+        self.assertEqual(current.json()["order_status"], "BLOCKED")
+
+    def test_open_order_can_be_changed_to_processed(self):
+        customer = self.create_customer(Decimal("100.00"))
+        order = self.create_order(customer["id"], Decimal("80.00"))
+        self.assertEqual(order["order_status"], "OPEN")
+
+        response = self.update_order_status(order, "PROCESSED")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["order_status"], "PROCESSED")
+
+    def test_order_amount_increase_cannot_exceed_available_credit(self):
+        customer = self.create_customer(Decimal("100.00"))
+        order = self.create_order(customer["id"], Decimal("90.00"))
+        request_payload = {
+            "customer_id": customer["id"],
+            "order_date": order["order_date"],
+            "order_amount": "101.00",
+            "order_status": "OPEN",
+        }
+
+        response = self.client.put(f"/orders/{order['order_id']}", json=request_payload)
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("exceed the customer's credit limit", response.json()["detail"])
+        current = self.client.get(f"/orders/{order['order_id']}")
+        self.assertEqual(current.status_code, 200, current.text)
+        self.assertEqual(Decimal(current.json()["order_amount"]), Decimal("90.00"))
+
+    def test_customer_change_is_checked_against_target_customer_credit(self):
+        source_customer = self.create_customer(Decimal("1000.00"))
+        target_customer = self.create_customer(Decimal("100.00"))
+        moving_order = self.create_order(source_customer["id"], Decimal("20.00"))
+        self.create_order(target_customer["id"], Decimal("90.00"))
+        request_payload = {
+            "customer_id": target_customer["id"],
+            "order_date": moving_order["order_date"],
+            "order_amount": moving_order["order_amount"],
+            "order_status": "OPEN",
+        }
+
+        response = self.client.put(
+            f"/orders/{moving_order['order_id']}", json=request_payload
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("exceed the customer's credit limit", response.json()["detail"])
+
+    def test_order_cannot_be_closed_with_uninvoiced_balance(self):
+        customer = self.create_customer(Decimal("5000.00"))
+        order = self.create_order(customer["id"], Decimal("1000.00"))
+        processed = self.update_order_status(order, "PROCESSED")
+        self.assertEqual(processed.status_code, 200, processed.text)
+
+        invoice = self.create_invoice_for_order(
+            customer["id"], order["order_id"], Decimal("1000.00")
+        )
+        cancelled_invoice = self.client.put(
+            f"/invoices/{invoice['invoice_id']}",
+            json={
+                "customer_id": customer["id"],
+                "invoice_number": invoice["invoice_number"],
+                "sales_order_id": order["order_id"],
+                "invoice_date": invoice["invoice_date"],
+                "due_date": invoice["due_date"],
+                "invoice_amount": invoice["invoice_amount"],
+                "invoice_status": "CANCELLED",
+            },
+        )
+        self.assertEqual(cancelled_invoice.status_code, 200, cancelled_invoice.text)
+
+        closed = self.update_order_status(order, "CLOSED")
+
+        self.assertEqual(closed.status_code, 409, closed.text)
+        self.assertIn("until its full amount is invoiced", closed.json()["detail"])
+
+    def test_fully_invoiced_order_can_be_closed(self):
+        customer = self.create_customer(Decimal("5000.00"))
+        order = self.create_order(customer["id"], Decimal("1000.00"))
+        processed = self.update_order_status(order, "PROCESSED")
+        self.assertEqual(processed.status_code, 200, processed.text)
+        invoice = self.create_invoice_for_order(
+            customer["id"], order["order_id"], Decimal("1000.00")
+        )
+        self.assertEqual(invoice["invoice_amount"], "1000.00")
+
+        closed = self.update_order_status(order, "CLOSED")
+
+        self.assertEqual(closed.status_code, 200, closed.text)
+        self.assertEqual(closed.json()["order_status"], "CLOSED")
 
     def test_payment_can_be_created_and_retrieved_via_api(self):
         customer = self.create_customer()
